@@ -29,8 +29,32 @@ if other_client_name:
     peer_server.bind((HOST, PORT))
     peer_server.listen()
 
+def client_side_server(client_from, client_to):
+    """
+    Function that sets up a server for client_from to talk to client_to
+    Input: 
+        client_from, client_to: client names
+    Output
+    """
+    pass
 
+def send_chat_request(client_to: dict):
+    """
+    Function that sends chat invite to another client that current client wants to chat to.
 
+    Input: 
+        client_to: python dictionary, contains all client info
+    """
+    json.dumps({"type": "chat_request","client_to": client_to}).encode("utf-8")
+    client.send(client_to)
+    pass
+
+def send_chat(client_to):
+    """
+    Function that sends chat message to another client.
+    """
+    
+    
 
 
 

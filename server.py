@@ -5,7 +5,7 @@ import uuid
 
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
-PORT = 65433
+PORT = 65435
 
 # For now, saving client info in a list of dicts. Switching to SQLite later.
 # Specifically, this should only be for online clients
@@ -63,41 +63,63 @@ def get_available_clients(client_id):
     available_clients = []
     for client in CLIENTS:
         if client["id"] != client_id:
-            available_clients.append({"name": client["name"], 
-                                      "addr": addr,
-                                      "client_id": client_id})
+            filtered_info = filter_client_info(client)
+            available_clients.append(filtered_info)
     return available_clients
 
+def filter_client_info(client_info:dict):
+    """
+    Helper function that extracts data from server end client info data that could be sent to client end.
+
+    Input:
+        client_info: dictionary, contains all server end data
+    Output:
+        filtered_client_info: dictionary, contains sendable client end data
+    """
+    return {"name": client_info["name"],
+            "client_id": client_info["id"]}
 
 
-def listen_to_client(conn, client_info):
+def listen_to_client(conn, client_from_info:dict):
     while True:
         try:
             req_msg = conn.recv(1024).decode("utf-8")
             req_msg = json.loads(req_msg)
-
+            client_from_name = client_from_info['name']
+            client_to_name = req_msg["client_to"]["name"]
+            print(f"[P2P CHAT REQUEST] {client_from_name} requested to chat with {client_to_name}")
+            print(req_msg)
             if req_msg["type"] == "chat_request":
-                process_chat_request(conn, req_msg)
+                process_chat_request(client_from_info, req_msg)
+            else:
+                print(req_msg)
             # could add block_user and other stuff later on
         except:
-            print(f"[DISCONNECTED] {client_info['name']}")
-            CLIENTS.remove(client_info)
+            print(f"[DISCONNECTED] {client_from_info['name']}")
+            CLIENTS.remove(client_from_info)
             conn.close()
             break
 
-def process_chat_request(conn, request_message):
+
+def process_chat_request(client_from_info: dict, request_message):
     """
     Helper function that processes chat_request from conn to client specified in the 
     request_message.
     """
     id_client_to = request_message["client_to"]["client_id"]
-    for client in CLIENTS:
-        if id_client_to == client[id]:
-            conn_client_to = client[conn]
+    print(id_client_to)
+    for c in CLIENTS:
+        if id_client_to == c["id"]:
+            conn_client_to = c["conn"]
 
-    conn_client_to.send() # FINISH THIS BY SENDING A CHAT REQUEST
+    filtered_client_from_info = filter_client_info(client_from_info)
+    chat_request = {"type": "chat_request",
+                    "client_from": filtered_client_from_info}
+    chat_request = json.dumps(chat_request)
+    chat_request_encoded = chat_request.encode("utf-8")
+    conn_client_to.send(chat_request_encoded) 
+    
 
-    pass
 
 
 

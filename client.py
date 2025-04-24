@@ -5,7 +5,7 @@ import random
 
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
-PORT = 65432
+PORT = 65431
 
 # Get Username, Initiate client Socket and establish Connection
 username = input("Enter name: ")
@@ -15,14 +15,13 @@ client.send(username.encode("utf-8"))
 
 # Server end has send info of currently available clients - CHANGE LATER SO THAT CLIENT LIST COULD BE UPDATED
 client_list_raw = json.loads(client.recv(1024).decode("utf-8"))
-if client_list_raw["type"] == "user_list":
-    print("Online users:", client_list_raw["users"]) # change so that user can only see client name later
-client_list = client_list_raw["users"] # list of all clients
-client_info = client_list_raw["client_info"] # info of current client
+print("Online Users:\n")
+for user in client_list_raw["users"]:
+    if user["name"] != username:
+        print(f"- {user['name']}")
 
-# for debugging purposes
-print("Client list:", client_list)
-print("Client info:", client_info)
+client_list = client_list_raw["users"] # list of all clients
+client_info_self = client_list_raw["client_info"] # info of current client
 
 # Initiates P2P Server Socket
 p2p_server_host = '0.0.0.0'
@@ -50,13 +49,15 @@ def receive_chat_request(chat_request_msg):
 
         acceptance_msg = json.dumps({"type": "chat_request_response", 
                                      "status": "accepted", 
-                                     "client_id": client_info["client_id"]})
+                                     # use "client_from" here because chat request is 
+                                     # "accepted" by the client_from
+                                     "client_from": client_info_self["client_id"]})
         client.send(acceptance_msg.encode("utf-8"))
 
     else:
         rejection_msg = json.dumps({"type": "chat_request_response", 
                                     "status": "rejected",
-                                    "client_id": client_info["id"]})
+                                    "client_from": client_info_self["client_id"]})
         client.send(rejection_msg.encode("utf-8"))
 
 
@@ -67,7 +68,6 @@ def receive_cr_response(cr_response_msg):
     if cr_response_msg["status"] == "accepted":
         print("Chat request accepted. You can start texting now!")
         in_p2p_server = True
-        threading.Thread(target=wait_for_p2p_connection, args=(p2p_server,), daemon=True).start()
         
     elif cr_response_msg["status"] == "rejected":
         pass
@@ -113,9 +113,6 @@ def receive():
 def send_chat_request():
     """
     Function that sends chat invite to another client that current client wants to chat to.
-
-    Input: 
-        client_to: python dictionary, contains all client info
     """
     while not in_p2p_server:
         try:
@@ -124,15 +121,8 @@ def send_chat_request():
             for c in client_list:
                 if c["name"] == client_to_name:
                     client_to = c
-            chat_request = json.dumps({"type": "chat_request", "client_to": client_to, "client_port": p2p_server_port}).encode("utf-8")
-            
-
-            # saving it to list of ports
-            p2p_server_list[client_to["client_id"]] = [p2p_port, p2p_server]
-
+            chat_request = json.dumps({"type": "chat_request", "client_to": client_to, "client_from": client_info_self}).encode("utf-8")
             client.send(chat_request)
-
-            print(f"[Starting P2P Server] on port{p2p_port}")
         except:
             break
     
@@ -164,6 +154,8 @@ def start_chat(p2p_server):
                 break
         except:
             break
+
+
 
 # Threads for sending and receiving
 threading.Thread(target=send_chat_request).start()

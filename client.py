@@ -5,7 +5,7 @@ import random
 
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
-PORT = 65431
+PORT = 65432
 
 # Get Username, Initiate client Socket and establish Connection
 username = input("Enter name: ")
@@ -17,17 +17,22 @@ client.send(username.encode("utf-8"))
 client_list_raw = json.loads(client.recv(1024).decode("utf-8"))
 if client_list_raw["type"] == "user_list":
     print("Online users:", client_list_raw["users"]) # change so that user can only see client name later
-client_list = client_list_raw["users"]
-client_info = client_list_raw["client_info"]
+client_list = client_list_raw["users"] # list of all clients
+client_info = client_list_raw["client_info"] # info of current client
 
-# p2p_server_list contains all the servers that are currently running
-# p2p_client_list contains all the clients that are connected to other p2p servers
-p2p_server_list = {} # elements within would be id: [port, server]
-p2p_client_list = {} # elements within would be id: [port, client]
+# for debugging purposes
+print("Client list:", client_list)
+print("Client info:", client_info)
+
+# Initiates P2P Server Socket
+p2p_server_host = '0.0.0.0'
+p2p_server_port = random.randint(50001,60000) 
+p2p_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+p2p_server.bind((HOST, p2p_server_port))
+p2p_server.listen()
 
 # Parameter that sates whether the client is in a p2p server or not
 in_p2p_server = False
-
     
 
 def receive_chat_request(chat_request_msg):
@@ -42,16 +47,11 @@ def receive_chat_request(chat_request_msg):
     accepted_request = input(f"{client_from_name} sent you a chat request. Accept?[y/n]\n")
 
     if accepted_request == "y":
+
         acceptance_msg = json.dumps({"type": "chat_request_response", 
                                      "status": "accepted", 
-                                    "client_id": client_info["id"]})
+                                     "client_id": client_info["client_id"]})
         client.send(acceptance_msg.encode("utf-8"))
-
-        # If Accepted, also just connect to server from port at chat_request_msg
-        p2p_client_port = chat_request_msg["client_port"]
-        p2p_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        p2p_client.connect((HOST, p2p_client_port))
-
 
     else:
         rejection_msg = json.dumps({"type": "chat_request_response", 
@@ -59,19 +59,19 @@ def receive_chat_request(chat_request_msg):
                                     "client_id": client_info["id"]})
         client.send(rejection_msg.encode("utf-8"))
 
+
 def receive_cr_response(cr_response_msg):
     """
     Helper Function of receive() that processes chat request response.
     """
     if cr_response_msg["status"] == "accepted":
         print("Chat request accepted. You can start texting now!")
-        client_id = cr_response_msg["client_id"]
-        p2p_server = p2p_server_list[client_id][1]
         in_p2p_server = True
-        threading.Thread(target=send, args=p2p_server,).start()
+        threading.Thread(target=wait_for_p2p_connection, args=(p2p_server,), daemon=True).start()
+        
     elif cr_response_msg["status"] == "rejected":
-        # Removes the client from the list of available clients because they rejected the request
-        del client_list[cr_response_msg["client_id"]]
+        pass
+
 
 def receive_text(text_msg):
     """
@@ -105,8 +105,8 @@ def receive():
                 receive_text(msg)
             elif msg["type"] == "server_broadcast":
                 print(msg["msg"])
-        except:
-            print("Disconnected from server from receiving chat request.")
+        except Exception as e:
+            print(f"[ERROR] {e}")
             break
 
 
@@ -124,18 +124,15 @@ def send_chat_request():
             for c in client_list:
                 if c["name"] == client_to_name:
                     client_to = c
-            p2p_port = random.randint(50001,60000) 
-            chat_request = json.dumps({"type": "chat_request", "client_to": client_to, "client_port": p2p_port}).encode("utf-8")
-
-            # starting a p2p server
-            p2p_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            p2p_server.bind((HOST, p2p_port))
-            p2p_server.listen()
+            chat_request = json.dumps({"type": "chat_request", "client_to": client_to, "client_port": p2p_server_port}).encode("utf-8")
+            
 
             # saving it to list of ports
             p2p_server_list[client_to["client_id"]] = [p2p_port, p2p_server]
 
             client.send(chat_request)
+
+            print(f"[Starting P2P Server] on port{p2p_port}")
         except:
             break
     

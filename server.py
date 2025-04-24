@@ -5,7 +5,7 @@ import uuid
 
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
-PORT = 65431
+PORT = 65432
 
 # For now, saving client info in a list of dicts. Switching to SQLite later.
 # Specifically, this should only be for online clients
@@ -22,7 +22,7 @@ server.listen()
 def handle_new_client(conn, addr):
     """
     Helper function that handles a newly connected client. 
-    Appends new user data, sends available clinet list to user, initiates listening.
+    Appends new user data, sends available client list to user, initiates listening.
 
     Inputs:
         conn: socket, connection of new client's socket
@@ -30,7 +30,6 @@ def handle_new_client(conn, addr):
     Outputs:
         N/A
     """
-
 
     # Receiving New User Data
     client_name = conn.recv(1024).decode("utf-8")
@@ -59,7 +58,7 @@ def get_available_clients(client_id):
     Function that takes in id of a client, returns a list of available clients(without self).
 
     Input: 
-        client_name: str, name of client 
+        client_id: string, the id of the client that is requesting available clients
     Output: 
         available_clients: list, a list of dictionary of available client's info
     """
@@ -107,12 +106,35 @@ def listen_to_client(conn, client_from_info:dict):
             conn.close()
             break
 
+def process_chat_request(client_from_info: dict, request_message):
+    """
+    Helper function that processes chat_request from conn to client specified in the 
+    request_message.
+
+    Inputs:
+        client_from_info: dictionary, contains client info of the requesting client
+        request_message: dictionary, contains chat_request message
+    Outputs:
+        N/A
+    """
+    id_client_to = request_message["client_to"]["client_id"]
+    for c in CLIENTS:
+        if id_client_to == c["client_id"]:
+            conn_client_to = c["conn"]
+
+    filtered_client_from_info = filter_client_info(client_from_info)
+    chat_request = {"type": "chat_request",
+                    "client_from": filtered_client_from_info,
+                    "client_port": request_message["client_port"]}
+    chat_request = json.dumps(chat_request)
+    chat_request_encoded = chat_request.encode("utf-8")
+    conn_client_to.send(chat_request_encoded) 
+
 def process_cr_response(client_from_info: dict, response_message):
     """
     Helper function that processes chat_request_response from conn to client specified in the
     request_message.
     """
-    
     conn_client_from = client_from_info["conn"]
 
     # Get the connection of the client that is being responded to
@@ -132,22 +154,7 @@ def process_cr_response(client_from_info: dict, response_message):
         conn_client_from.send(json.dumps(server_msg).encode("utf-8"))
         conn_client_to.send(json.dumps(server_msg).encode("utf-8"))
 
-def process_chat_request(client_from_info: dict, request_message):
-    """
-    Helper function that processes chat_request from conn to client specified in the 
-    request_message.
-    """
-    id_client_to = request_message["client_to"]["client_id"]
-    for c in CLIENTS:
-        if id_client_to == c["client_id"]:
-            conn_client_to = c["conn"]
 
-    filtered_client_from_info = filter_client_info(client_from_info)
-    chat_request = {"type": "chat_request",
-                    "client_from": filtered_client_from_info}
-    chat_request = json.dumps(chat_request)
-    chat_request_encoded = chat_request.encode("utf-8")
-    conn_client_to.send(chat_request_encoded) 
     
 
 
@@ -162,3 +169,4 @@ while True:
     conn, addr = server.accept()
     threading.Thread(target=handle_new_client, args=(conn, addr)).start()
     
+ 

@@ -5,7 +5,7 @@ import uuid
 
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
-PORT = 65430
+PORT = 65431
 
 # For now, saving client info in a list of dicts. Switching to SQLite later.
 # Specifically, this should only be for online clients
@@ -90,7 +90,7 @@ def filter_client_info(client_info:dict):
             "p2p_port": client_info["p2p_port"]}
 
 
-def listen_to_client(conn, client_from_info:dict):
+def listen_to_client(conn: socket.socket, client_from_info:dict):
     while True:
         try:
             msg = conn.recv(1024).decode("utf-8")
@@ -103,12 +103,8 @@ def listen_to_client(conn, client_from_info:dict):
                 process_chat_request(client_from_info, msg)
 
             elif msg["type"] == "chat_request_response":
-                client_to_name = msg["client_to"]
-                print(client_to_name)
-                status = msg["status"]
-                print(f"[P2P CHAT REQUEST RESPONSE] {client_from_name} {status} to chat request from ")
-                process_cr_response(client_from_info, msg)
-
+                process_cr_response(msg)
+                
             else:
                 print("[UNKNOWN MESSAGE]", msg)
 
@@ -147,39 +143,19 @@ def process_chat_request(client_from_info: dict, request_message):
     chat_request_encoded = chat_request.encode("utf-8")
     conn_client_to.send(chat_request_encoded) 
 
-def process_cr_response(client_from_info: dict, response_message):
+def process_cr_response(response_message):
     """
     Helper function that processes chat_request_response from conn to client specified in the
     request_message.
+    Inputs:
+        response_message: dictionary, contains chat_request_response message
+    Outputs:
+        N/A
     """
-    conn_client_from = client_from_info["conn"]
-
-    print("problem with connection")
-    # Get the connection of the client that is being responded to
-    # and send the response message to them
-    id_client_to = response_message["client_to"]["client_id"]
-    name_client_to = response_message["client_to"]["name"]
-    for c in CLIENTS:
-        if id_client_to == c["client_id"]:
-            conn_client_to = c["conn"]
-
-    conn_client_to.send(json.dumps(response_message).encode("utf-8"))
-
-
-    print("Problem with broadcast?")
-    # If the response is accepted, send a server_broadcast message to both clients
-    # to notify them that they can start chatting
-    if response_message["status"] == "accepted":
-        server_msg = {"type": "server_broadcast",
-                      "msg": f"{name_client_to} and {client_from_info['name']} can now start chatting!"}
-        conn_client_from.send(json.dumps(server_msg).encode("utf-8"))
-        conn_client_to.send(json.dumps(server_msg).encode("utf-8"))
-
-
-    
-
-
-
+    client_to_name = response_message["client_to"]["name"]
+    client_from_name = response_message["client_from"]["name"]
+    status = response_message["status"]
+    print(f"[P2P CHAT REQUEST RESPONSE] {client_from_name} {status} to chat request from {client_to_name}")
 
 
 

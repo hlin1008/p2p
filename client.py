@@ -5,7 +5,7 @@ import random
 
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
-PORT = 65430
+PORT = 65431
 
 # Initiates P2P Server Socket
 p2p_server_host = '0.0.0.0'
@@ -36,10 +36,55 @@ client_list = client_list_raw["users"] # list of all clients
 client_info_self = client_list_raw["client_info"] # info of current client
 
 
+# Boolean to check if the client is in a chat session
+IN_P2P_SERVER = False
+
+
+def main_loop():
+    """
+    Main function that runs the client. 
+    It is a while loop that keeps the client end running.
+    """
+    print(f"In P2P Server: {IN_P2P_SERVER}")
+    while not IN_P2P_SERVER:
+        cmd = input("\nType 'chat' to chat, or 'exit' to quit: ").strip()
+        if cmd == "chat":
+            send_chat_request()
+        elif cmd == "exit":
+            print("Exiting...")
+            client.close()
+            break
+        else:
+            print("Unknown command.")
+
+
+def chat_session(p2p_socket):
+    """
+    Function that handles the chat session between two clients.
+    It is a while loop that keeps the chat session running.
+    It starts a thread to receive messages from the other client and sends messages to the other client.
+    Input:
+        p2p_socket: socket, the socket that is used to send messages
+    Output:
+        None
+    """
+    threading.Thread(target=receive, args=(p2p_socket, )).start()
+    print("debug")
+    while IN_P2P_SERVER:
+        send(p2p_socket)
+
+
 def send_chat_request():
     """
-    Function that sends chat invite to another client that current client wants to chat to.
+    Function that sends a chat request to another client.
+    Fires up the p2p server and waits for a client to connect to it.
+
+    Input:
+        None
+    Output:
+        None
     """
+    global IN_P2P_SERVER
     # Get the client that the current client wants to chat to
     client_to_name = input("\nWho would you like to talk to?\n")
 
@@ -58,26 +103,35 @@ def send_chat_request():
         # The first thing the p2p server receives is a should be the chat request response
         status_message = json.loads(p2p_conn.recv(1024).decode("utf-8"))
         if status_message["status"] == "accepted":
+            # Stops the main loop
+            # and starts the p2p server
+            IN_P2P_SERVER = True
             print(f"\nConnected to {client_to_name}!")
             print(f"\n===== Chat with {client_to_name} starts below ===== \n")
 
-        chat_session(p2p_conn)
+            # Puts system in a chat session
+            chat_session(p2p_conn)
+        else:
+            print(f"\n{client_to_name} rejected your chat request.")
+            p2p_conn.close()
 
 
-def chat_session(p2p_socket):
-    threading.Thread(target=receive, args=(p2p_socket, )).start()
-    while True:
-        send(p2p_socket)
+
 
 
 def receive_chat_request(chat_request_msg):
     """
     Helper function of receive() that processes chat requests on the client end. Takes in a chat rq and unwraps it.
+    Responds to the chat request with a response message.
 
     Input: 
         chat_request_msg: dictionary, contains "type", "client_from" -> another dictionary, client's info
     Output:
     """
+    global IN_P2P_SERVER
+
+    # Unwrap the chat request message
+    # Get the client that SENT THE CHAT REQUEST
     client_from_name = chat_request_msg["client_from"]["name"]
     accepted_request = input(f"{client_from_name} sent you a chat request. Accept?[y/n]\n")
 
@@ -85,6 +139,11 @@ def receive_chat_request(chat_request_msg):
     client_from_host = chat_request_msg["client_from"]["p2p_host"]
 
     if accepted_request == "y":
+        # Stops the main loop
+        # and starts the p2p server
+        # Puts system in a chat session
+        IN_P2P_SERVER = True
+
         # Connect to the client that sent the chat request
         p2p_client.connect((client_from_host, client_from_port))
         print(f"\nConnected to {client_from_name}!")
@@ -97,22 +156,35 @@ def receive_chat_request(chat_request_msg):
                                      "status": "accepted", 
                                      # use "client_from" here because chat request is 
                                      # "accepted" by the client_from
-                                     "client_from": client_info_self["client_id"]})
+                                     "client_from": client_info_self,
+                                     # client_to is the client that sent the chat request
+                                     "client_to": chat_request_msg["client_from"]})
+        
+        # Send acceptance message to the server and the client that sent the chat request
+        client.send(acceptance_msg.encode("utf-8"))
         p2p_client.send(acceptance_msg.encode("utf-8"))
 
         chat_session(p2p_client)
 
-
     else:
-        rejection_msg = json.dumps({"type": "chat_request_response", 
-                                    "status": "rejected",
-                                    "client_from": client_info_self["client_id"]})
-        client.send(rejection_msg.encode("utf-8"))
+        p2p_client.connect((client_from_host, client_from_port))
+        acceptance_msg = json.dumps({"type": "chat_request_response", 
+                                     "status": "rejected", 
+                                     # use "client_from" here because chat request is 
+                                     # "accepted" by the client_from
+                                     "client_from": client_info_self["client_id"]})
+        client.send(acceptance_msg.encode("utf-8"))
+        p2p_client.send(acceptance_msg.encode("utf-8"))
 
 
 def receive_cr_response(cr_response_msg):
     """
     Helper Function of receive() that processes chat request response.
+
+    Input:
+        cr_response_msg: dictionary, contains "type", "status" -> accepted/rejected
+    Output:
+        None
     """
     if cr_response_msg["status"] == "accepted":
         print("Chat request accepted. You can start texting now!")
@@ -124,12 +196,12 @@ def receive_cr_response(cr_response_msg):
 
 def receive_text(text_msg):
     """
-    Helper Function of receive() that processes text. 
+    Helper function of receive() that processes text messages.
 
-    input:
-
-    Output:
-
+    Input: 
+        text_msg: dictionary, contains "type", "msg" -> the text message
+    Output: 
+        None
     """
     text_msg = text_msg["msg"]
     print(text_msg)
@@ -177,8 +249,13 @@ def send(p2p_socket: socket.socket):
 
 
 
-# While loop that keeps the client end running
-threading.Thread(target=send_chat_request).start()
-threading.Thread(target=receive, args=(client,)).start()
+
+# Start server listener in the background
+threading.Thread(target=receive, args=(client,), daemon=True).start()
+
+# Enter main loop (user interaction)
+main_loop()
+
+
 
 

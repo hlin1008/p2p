@@ -5,7 +5,7 @@ import uuid
 
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
-PORT = 65431
+PORT = 65430
 
 # For now, saving client info in a list of dicts. Switching to SQLite later.
 # Specifically, this should only be for online clients
@@ -30,15 +30,20 @@ def handle_new_client(conn, addr):
     Outputs:
         N/A
     """
-
     # Receiving New User Data
-    client_name = conn.recv(1024).decode("utf-8")
-    print(f"[NEW CONNECTION] {addr} connected.")
+    client_name_and_p2p = conn.recv(1024).decode("utf-8")
+    client_name_and_p2p = json.loads(client_name_and_p2p)
+    client_name = client_name_and_p2p["name"]
+    client_p2p_port = client_name_and_p2p["p2p_port"]
+    client_p2p_host = client_name_and_p2p["p2p_host"]
+    print(f"[NEW CONNECTION] {client_name} at {addr} connected.")
     client_id = str(uuid.uuid4())
     client_info = {"client_id": client_id,
                    "name": client_name,
                    "addr": addr,
-                   "conn": conn}
+                   "conn": conn,
+                   "p2p_host": client_p2p_host,
+                   "p2p_port": client_p2p_port}
 
     CLIENTS.append(client_info)
 
@@ -69,6 +74,7 @@ def get_available_clients(client_id):
             available_clients.append(filtered_info)
     return available_clients
 
+
 def filter_client_info(client_info:dict):
     """
     Helper function that extracts data from server end client info data that could be sent to client end.
@@ -79,7 +85,9 @@ def filter_client_info(client_info:dict):
         filtered_client_info: dictionary, contains sendable client end data
     """
     return {"name": client_info["name"],
-            "client_id": client_info["client_id"]}
+            "client_id": client_info["client_id"],
+            "p2p_host": client_info["p2p_host"],
+            "p2p_port": client_info["p2p_port"]}
 
 
 def listen_to_client(conn, client_from_info:dict):

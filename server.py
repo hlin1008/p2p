@@ -3,62 +3,53 @@ import threading
 import json
 import uuid
 
+# Importing FastAPI and Pydantic for future use
+from fastapi import FastAPI
+from pydantic import BaseModel
+
 # Define basic HOST/PORT parameters
 HOST = '0.0.0.0'
 PORT = 65431
 
-# For now, saving client info in a list of dicts. Switching to SQLite later.
-# Specifically, this should only be for online clients
-CLIENTS = []
+CLIENTS = [] # List of connected clients
+REQS = {} # For now, saving chat requests in a dict. Switching to SQLite later.
+RESPONSES = {} # For now, saving chat request responses in a dict. Switching to SQLite later.
 
+# initiate FastAPI
+app = FastAPI()
 
-# Initiate Server Socket and Start Listening
-print("[STARTING] Server is starting...")
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((HOST, PORT))
-server.listen()
+# == Data Model for FastAPI ==
+class NewUser(BaseModel):
+    name: str
+    p2p_host: str
+    p2p_port: int
 
+class ChatRequest(BaseModel):
+    client_from_id: str 
+    client_to_id: str
 
-def handle_new_client(conn, addr):
+class ChatRequestResponse(BaseModel):
+    client_from_id: str
+    client_to_id: str
+    status: str
+
+# == Helper Functions ==
+def filter_client_info(client_info:dict):
     """
-    Helper function that handles a newly connected client. 
-    Appends new user data, sends available client list to user, initiates listening.
+    Helper function that extracts data from server end client info data that could be sent to client end.
 
-    Inputs:
-        conn: socket, connection of new client's socket
-        addr: address of the client
-    Outputs:
-        N/A
+    Input:
+        client_info: dictionary, contains all server end data
+    Output:
+        filtered_client_info: dictionary, contains sendable client end data
     """
-    # Receiving New User Data
-    client_name_and_p2p = conn.recv(1024).decode("utf-8")
-    client_name_and_p2p = json.loads(client_name_and_p2p)
-    client_name = client_name_and_p2p["name"]
-    client_p2p_port = client_name_and_p2p["p2p_port"]
-    client_p2p_host = client_name_and_p2p["p2p_host"]
-    print(f"[NEW CONNECTION] {client_name} at {addr} connected.")
-    client_id = str(uuid.uuid4())
-    client_info = {"client_id": client_id,
-                   "name": client_name,
-                   "addr": addr,
-                   "conn": conn,
-                   "p2p_host": client_p2p_host,
-                   "p2p_port": client_p2p_port}
+    return {"name": client_info["name"],
+            "client_id": client_info["client_id"],
+            "p2p_host": client_info["p2p_host"],
+            "p2p_port": client_info["p2p_port"]}
 
-    CLIENTS.append(client_info)
 
-    # Sending Available Client Data to New User
-    available_clients = get_available_clients(client_id)
-    client_info = filter_client_info(client_info)
-
-    conn.send(json.dumps({"type": "user_list",
-                          "users": available_clients,
-                          "client_info": client_info}).encode("utf-8"))
-    
-    # Start lisening to incoming request from client
-    listen_to_client(conn, client_info)
-
-def get_available_clients(client_id):
+def get_available_clients(client_id:str):
     """
     Function that takes in id of a client, returns a list of available clients(without self).
 
@@ -75,95 +66,74 @@ def get_available_clients(client_id):
     return available_clients
 
 
-def filter_client_info(client_info:dict):
+# == FastAPI ==
+@app.post("/register")
+def handle_new_client(client: NewUser):
     """
-    Helper function that extracts data from server end client info data that could be sent to client end.
-
-    Input:
-        client_info: dictionary, contains all server end data
-    Output:
-        filtered_client_info: dictionary, contains sendable client end data
-    """
-    return {"name": client_info["name"],
-            "client_id": client_info["client_id"],
-            "p2p_host": client_info["p2p_host"],
-            "p2p_port": client_info["p2p_port"]}
-
-
-def listen_to_client(conn: socket.socket, client_from_info:dict):
-    while True:
-        try:
-            msg = conn.recv(1024).decode("utf-8")
-            msg = json.loads(msg)
-            client_from_name = client_from_info['name']
-
-            if msg["type"] == "chat_request":
-                client_to_name = msg["client_to"]["name"]
-                print(f"[P2P CHAT REQUEST] {client_from_name} requested to chat with {client_to_name}")
-                process_chat_request(client_from_info, msg)
-
-            elif msg["type"] == "chat_request_response":
-                process_cr_response(msg)
-                
-            else:
-                print("[UNKNOWN MESSAGE]", msg)
-
-        except:
-            print(f"[DISCONNECTED] {client_from_info['name']}")
-            for c in CLIENTS:
-                if c["client_id"] == client_from_info["client_id"]:
-                    # Remove the client from the list of clients
-                    CLIENTS.remove(c)
-            conn.close()
-            break
-
-def process_chat_request(client_from_info: dict, request_message):
-    """
-    Helper function that processes chat_request from conn to client specified in the 
-    request_message.
+    Helper function that handles a newly connected client. 
+    Appends new user data, sends available client list to user, initiates listening.
 
     Inputs:
-        client_from_info: dictionary, contains client info of the requesting client
-        request_message: dictionary, contains chat_request message
+        conn: socket, connection of new client's socket
+        addr: address of the client
     Outputs:
         N/A
     """
-    id_client_to = request_message["client_to"]["client_id"]
+    # Receiving New User Data
+    new_client_id = str(uuid.uuid4())
+    new_client_info = { "client_id": new_client_id,
+                        "name": client.name,
+                        "p2p_host": client.p2p_host,
+                        "p2p_port": client.p2p_port}
+    
+    CLIENTS.append(new_client_info)
 
-    # Find the connection of the client that is being requested to
-    # and send the request message to them
-    for c in CLIENTS:
-        if id_client_to == c["client_id"]:
-            conn_client_to = c["conn"]
+    available_clients = [filter_client_info(c) for c in CLIENTS if c["client_id"] != new_client_id]
 
-    filtered_client_from_info = filter_client_info(client_from_info)
-    chat_request = {"type": "chat_request",
-                    "client_from": filtered_client_from_info}
-    chat_request = json.dumps(chat_request)
-    chat_request_encoded = chat_request.encode("utf-8")
-    conn_client_to.send(chat_request_encoded) 
-
-def process_cr_response(response_message):
-    """
-    Helper function that processes chat_request_response from conn to client specified in the
-    request_message.
-    Inputs:
-        response_message: dictionary, contains chat_request_response message
-    Outputs:
-        N/A
-    """
-    client_to_name = response_message["client_to"]["name"]
-    client_from_name = response_message["client_from"]["name"]
-    status = response_message["status"]
-    print(f"[P2P CHAT REQUEST RESPONSE] {client_from_name} {status} to chat request from {client_to_name}")
+    return {
+        "your_info": filter_client_info(new_client_info),
+        "available_clients": available_clients
+    }
 
 
+@app.get("/users")
+def get_users():
+    return [filter_client_info(c) for c in CLIENTS]
 
 
-# While-Loop that appends client data when new connection established
-# Also send available clients when connection established 
-while True:
-    conn, addr = server.accept()
-    threading.Thread(target=handle_new_client, args=(conn, addr)).start()
+@app.get("/user/{client_id}")
+def get_user_info(client_id: str):
+    for client in CLIENTS:
+        if client["client_id"] == client_id:
+            return filter_client_info(client)
+    return {"error": "User not found"}
+
+@app.post("/send_offer")
+def send_offer(offer: ChatRequest):
+    if offer.client_to_id not in REQS:
+        REQS[offer.client_to_id] = []
+    REQS[offer.client_to_id].append({
+        "from_client_id": offer.client_from_id
+    })
+    return {"status": "Offer sent"}
+
+@app.get("/fetch_offers/{client_id}")
+def fetch_offers(client_id: str):
+    return REQS.pop(client_id, [])
+
+@app.post("/send_offer_response")
+def send_offer_response(response: ChatRequestResponse):
+    if response.client_to_id not in RESPONSES:
+        RESPONSES[response.client_to_id] = []
+    RESPONSES[response.client_to_id].append({
+        "from_client_id": response.client_from_id,
+        "status": response.status
+    })
+    return {"status": "Response sent"}
+
+@app.get("/fetch_responses/{client_id}")
+def fetch_responses(client_id: str):
+    return RESPONSES.pop(client_id, [])
+
     
  

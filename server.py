@@ -48,7 +48,6 @@ def filter_client_info(client_info:dict):
             "p2p_host": client_info["p2p_host"],
             "p2p_port": client_info["p2p_port"]}
 
-
 def get_available_clients(client_id:str):
     """
     Function that takes in id of a client, returns a list of available clients(without self).
@@ -79,6 +78,8 @@ def handle_new_client(client: NewUser):
     Outputs:
         N/A
     """
+    global CLIENTS
+
     # Receiving New User Data
     new_client_id = str(uuid.uuid4())
     new_client_info = { "client_id": new_client_id,
@@ -103,23 +104,42 @@ def get_users():
 
 @app.get("/user/{client_id}")
 def get_user_info(client_id: str):
+    """
+    Function that takes in a client_id and returns the client's info.
+    Inputs:
+        client_id: string, the id of the client
+    Outputs:
+        client_info: dictionary, contains the client's info
+    """
     for client in CLIENTS:
         if client["client_id"] == client_id:
             return filter_client_info(client)
     return {"error": "User not found"}
 
-@app.post("/send_offer")
-def send_offer(offer: ChatRequest):
-    if offer.client_to_id not in REQS:
-        REQS[offer.client_to_id] = []
-    REQS[offer.client_to_id].append({
-        "from_client_id": offer.client_from_id
-    })
-    return {"status": "Offer sent"}
 
-@app.get("/fetch_offers/{client_id}")
+@app.post("/send_chat_request")
+def send_chat_request(req: ChatRequest):
+    """
+    Function that handles sending chat requests to other clients.
+    Stores the request in a dictionary with client_to_id as the key and a list of requests as the value.
+
+    Inputs:
+        req: ChatRequest, contains client_from_id and client_to_id
+    Outputs:
+        N/A
+    """
+    if req.client_to_id not in REQS:
+        REQS[req.client_to_id] = []
+    REQS[req.client_to_id].append({
+        "from_client_id": req.client_from_id
+    })
+    return {"status": "Chat request sent"}
+
+"""
+@app.get("/check_chat_request/{client_id}")
 def fetch_offers(client_id: str):
     return REQS.pop(client_id, [])
+
 
 @app.post("/send_offer_response")
 def send_offer_response(response: ChatRequestResponse):
@@ -131,9 +151,27 @@ def send_offer_response(response: ChatRequestResponse):
     })
     return {"status": "Response sent"}
 
+
 @app.get("/fetch_responses/{client_id}")
 def fetch_responses(client_id: str):
-    return RESPONSES.pop(client_id, [])
+    return RESPONSES.pop(client_id, [])"""
 
     
- 
+# == Debug ==
+@app.get("/debug")
+def show_all_debug():
+    return {"clients": CLIENTS,
+            "requests": REQS,
+            "responses": RESPONSES}
+
+@app.get("/debug/show_clients")
+def show_clients():
+    return CLIENTS
+
+@app.get("/debug/show_requests")
+def show_requests():
+    return REQS
+
+@app.get("/debug/show_responses")
+def show_responses():
+    return RESPONSES

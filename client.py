@@ -1,142 +1,137 @@
-import socket
 import threading
+import requests
 import json
-import random
 
-# Define basic HOST/PORT parameters
-HOST = '0.0.0.0'
-PORT = 65431
 
-# Global flags
-incoming_chat_request = None
-IN_CHAT_SESSION = threading.Event()
+SERVER_URL = "http://localhost:65431"  # URL of the server
 
-# Initiates P2P Server Socket
-p2p_server_host = '0.0.0.0'
-p2p_server_port = random.randint(50001, 60000)
-p2p_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-p2p_server.bind((HOST, p2p_server_port))
-p2p_server.listen()
+client_info = None  # Client info to be sent to server, stored at client end
 
-# Get Username, Initiate client Socket and establish Connection
-username = input("Enter name: ")
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((HOST, PORT))
-userinfo = {"name": username, "p2p_port": p2p_server_port, "p2p_host": p2p_server_host}
-client.send(json.dumps(userinfo).encode('utf-8'))
+def register_client():
+    """
+    Function to register the client with the server.
+    """
+    global client_info
+    username = input("Enter your name: ")
+    p2p_host = input("Enter your P2P host: ")
+    p2p_port = int(input("Enter your P2P port: "))
 
-# Receive initial client list
-client_list_raw = json.loads(client.recv(1024).decode('utf-8'))
-print("\nOnline Users:")
-for user in client_list_raw["users"]:
-    if user["name"] != username:
-        print(f"- {user['name']}")
+    client_info = {
+        "name": username,
+        "p2p_host": p2p_host,
+        "p2p_port": p2p_port
+    }
 
-client_list = client_list_raw["users"]
-client_info_self = client_list_raw["client_info"]
+    response = requests.post(f"{SERVER_URL}/register", json=client_info)
+    if response.status_code == 200:
+        # Add server-generated client_id to client_info
+        client_info["client_id"] = response.json()["your_info"]["client_id"]
 
-# Create p2p client socket for outgoing connections
-p2p_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        print("Client registered successfully.")
+        return response.json()
+    
+    else:
+        print("Failed to register client.")
+        return None
+    # could later change so that return client info from response body
 
-def main_loop():
-    global incoming_chat_request
-    while True:
-        if incoming_chat_request:
-            handle_incoming_chat()
 
-        cmd = input("\nType 'chat' to chat, or 'exit' to quit: ").strip()
-        if cmd == "chat":
-            send_chat_request()
-        elif cmd == "exit":
-            print("Exiting...")
-            client.close()
-            break
-        else:
-            print("Unknown command.")
+def view_users():
+    response = requests.get(f"{SERVER_URL}/users")
+    if response.status_code == 200:
+        users = response.json()
+        print("\n=== Online Users ===")
+        for user in users:
+            if user["client_id"] != client_info["client_id"]:
+                print(f"- {user['name']} ({user['client_id']})")
+    else:
+        print("Failed to fetch users.")
+
 
 def send_chat_request():
-    global IN_CHAT_SESSION
-    client_to_name = input("\nWho would you like to talk to?\n").strip()
-    client_to = next((c for c in client_list if c["name"] == client_to_name), None)
+    client_to_id = input("Enter the client ID you want to chat with: ")
+    response = requests.post(f"{SERVER_URL}/send_chat_request", json={
+        "client_from_id": client_info["client_id"],
+        "client_to_id": client_to_id
+    })
 
-    if client_to:
-        chat_request = json.dumps({"type": "chat_request", "client_to": client_to, "client_from": client_info_self}).encode('utf-8')
-        client.send(chat_request)
-        p2p_conn, _ = p2p_server.accept()
-
-        status_message = json.loads(p2p_conn.recv(1024).decode('utf-8'))
-        if status_message["status"] == "accepted":
-            IN_CHAT_SESSION.set()
-            print(f"\nConnected to {client_to_name}!\n===== Chat with {client_to_name} starts below =====\n")
-            chat_session(p2p_conn)
-        else:
-            print(f"\n{client_to_name} rejected your chat request.")
-            p2p_conn.close()
-
-def chat_session(p2p_socket):
-    threading.Thread(target=receive_messages, args=(p2p_socket,), daemon=True).start()
-    while IN_CHAT_SESSION.is_set():
-        msg = input()
-        full_msg = json.dumps({"type": "chat", "msg": f"[{username}]: {msg}"})
-        p2p_socket.send(full_msg.encode('utf-8'))
-
-def receive_messages(sock):
-    while True:
-        try:
-            msg = sock.recv(1024)
-            if not msg:
-                break
-            data = json.loads(msg.decode('utf-8'))
-            print(f"\n{data['msg']}")
-        except:
-            break
-
-def receive(server):
-    global incoming_chat_request
-    while True:
-        try:
-            msg = json.loads(server.recv(1024).decode('utf-8'))
-            if msg["type"] == "chat_request":
-                incoming_chat_request = msg
-            elif msg["type"] == "chat":
-                print(f"\n{msg['msg']}")
-            elif msg["type"] == "server_broadcast":
-                print(msg["msg"])
-        except Exception as e:
-            print(f"[ERROR] {e}")
-            break
-
-def handle_incoming_chat():
-    global incoming_chat_request
-    global IN_CHAT_SESSION
-
-    client_from_name = incoming_chat_request["client_from"]["name"]
-    client_from_port = incoming_chat_request["client_from"]["p2p_port"]
-    client_from_host = incoming_chat_request["client_from"]["p2p_host"]
-
-    accept = input(f"\n{client_from_name} sent you a chat request. Accept? (y/n): ").strip()
-
-    temp_p2p_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    temp_p2p_client.connect((client_from_host, client_from_port))
-
-    if accept.lower() == 'y':
-        IN_CHAT_SESSION.set()
-        acceptance_msg = {"type": "chat_request_response", "status": "accepted", "client_from": client_info_self}
-        client.send(json.dumps(acceptance_msg).encode('utf-8'))
-        temp_p2p_client.send(json.dumps(acceptance_msg).encode('utf-8'))
-
-        print(f"\nConnected to {client_from_name}!\n===== Chat with {client_from_name} starts below =====\n")
-        chat_session(temp_p2p_client)
+    if response.status_code == 200:
+        print("Offer sent successfully.")
     else:
-        rejection_msg = {"type": "chat_request_response", "status": "rejected", "client_from": client_info_self}
-        client.send(json.dumps(rejection_msg).encode('utf-8'))
-        temp_p2p_client.send(json.dumps(rejection_msg).encode('utf-8'))
-        temp_p2p_client.close()
+        print("Failed to send offer.")
 
-    incoming_chat_request = None
+def check_chat_request():
+    response = requests.get(f"{SERVER_URL}/check_chat_request/{client_info['client_id']}")
+    if response.status_code == 200:
+        offers = response.json()
+        if offers:
+            for offer in offers:
+                from_id = offer["from_client_id"]
+                print(f"\nReceived chat offer from {from_id}")
+                decision = input("Accept (a) or Reject (r)? ").strip().lower()
+                status = "accepted" if decision == "a" else "rejected"
+                send_cr_response(from_id, status)
+        else:
+            print("No new offers.")
+    else:
+        print("Failed to fetch offers.")
 
-# Start background receive thread
-threading.Thread(target=receive, args=(client,), daemon=True).start()
 
-# Start user input loop
-main_loop()
+def send_cr_response(from_id, status):
+    response = requests.post(f"{SERVER_URL}/send_offer_response", json={
+        "client_from_id": client_info["client_id"],
+        "client_to_id": from_id,
+        "status": status
+    })
+
+    if response.status_code == 200:
+        print("Offer response sent successfully.")
+    else:
+        print("Failed to send offer response.")
+
+def check_cr_response():
+    response = requests.get(f"{SERVER_URL}/fetch_responses/{client_info['client_id']}")
+    if response.status_code == 200:
+        responses = response.json()
+        if responses:
+            for res in responses:
+                from_id = res["from_client_id"]
+                status = res["status"]
+                print(f"\nOffer to {from_id} was {status}!")
+                if status == "accepted":
+                    # TODO: Start P2P connection here
+                    print("You can now start direct P2P connection.")
+        else:
+            print("No new responses.")
+    else:
+        print("Failed to fetch responses.")
+
+def main_menu():
+    while True:
+        print("\n===== Menu =====")
+        print("1. Register")
+        print("2. View Online Users")
+        print("3. Send Chat Offer")
+        print("4. Fetch Offers / Responses Manually")
+        print("0. Exit")
+        choice = input("Enter your choice: ").strip()
+
+        if choice == "1":
+            register_client()
+        elif choice == "2":
+            view_users()
+        elif choice == "3":
+            send_chat_request()
+        elif choice == "4":
+            check_chat_request()
+            check_cr_response()
+        elif choice == "0":
+            print("Goodbye!")
+            break
+        else:
+            print("Invalid choice!")
+
+
+
+# Start user menu
+main_menu()

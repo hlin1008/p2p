@@ -3,6 +3,7 @@ import requests
 import json
 import random
 import socket
+import time
 
 
 
@@ -64,12 +65,18 @@ def update_client_info():
     """
     Function to update the client info with the server.
     """
-    global client_info
-    response = requests.get(f"{SERVER_URL}/users")
-    if response.status_code == 200:
-        users = response.json()
-        for user in users:
-            other_clients.append(user)
+    global other_clients
+
+    while True:
+        response = requests.get(f"{SERVER_URL}/users")
+        if response.status_code == 200:
+            users = response.json()
+            for user in users:
+                if user not in other_clients:
+                    other_clients.append(user)
+            time.sleep(15)
+        else:
+            print("Failed to fetch users.")
     
 
 def send_chat_request():
@@ -180,7 +187,7 @@ def p2p_connect(client_id):
 
     try:
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_connecting_info = other_clients[client_id]
+        client_connecting_info = other_clients[client_id] # retrive client info from other_clients
         conn.connect((client_connecting_info["p2p_host"], client_connecting_info["p2p_port"]))
         connections[client_id] = conn
     except Exception as e:
@@ -192,7 +199,7 @@ def p2p_send_text(client_id, text):
     Function to send text to another client using P2P.
     """
     if client_id not in connections:
-        print(f"Not connected to {client_id['name']}.")
+        print(f"Not connected to {client_id}.")
         return
 
     try:

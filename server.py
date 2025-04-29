@@ -135,14 +135,14 @@ def send_chat_request(req: ChatRequest):
     })
     return {"status": "Chat request sent"}
 
-"""
+ 
 @app.get("/check_chat_request/{client_id}")
 def fetch_offers(client_id: str):
-    return REQS.pop(client_id, [])
+    return REQS[client_id]
 
 
 @app.post("/send_offer_response")
-def send_offer_response(response: ChatRequestResponse):
+def send_request_response(response: ChatRequestResponse):
     if response.client_to_id not in RESPONSES:
         RESPONSES[response.client_to_id] = []
     RESPONSES[response.client_to_id].append({
@@ -154,7 +154,7 @@ def send_offer_response(response: ChatRequestResponse):
 
 @app.get("/fetch_responses/{client_id}")
 def fetch_responses(client_id: str):
-    return RESPONSES.pop(client_id, [])"""
+    return RESPONSES[client_id]
 
     
 # == Debug ==

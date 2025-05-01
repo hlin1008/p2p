@@ -1,113 +1,115 @@
-from tkinter import *
+import tkinter as tk
+from tkinter import ttk
+from client_chat_handler import ClientChatHandler
 import threading
-import requests
-import client.client as client  # your client-side socket/chat logic
-
-SERVER_URL = "http://localhost:8000"  # adjust if needed
-
-client_id = None
-
-def register():
-    global client_id
-    name = name_entry.get()
-    if not name:
-        log("Enter a name first")
-        return
-
-    payload = {
-        "name": name,
-        "p2p_host": "localhost",
-        "p2p_port": 6000  # or generate dynamically
-    }
-
-    try:
-        res = requests.post(f"{SERVER_URL}/register", json=payload)
-        if res.status_code == 200:
-            data = res.json()
-            client_id = data["your_info"]["client_id"]
-            log(f"Registered as {name}")
-            update_users()
-        else:
-            log("Registration failed")
-    except Exception as e:
-        log(f"Error: {e}")
 
 
-def update_users():
-    try:
-        res = requests.get(f"{SERVER_URL}/users")
-        users = res.json()
-        user_list.delete(0, END)
-        for u in users:
-            if u["client_id"] != client_id:
-                user_list.insert(END, f"{u['name']} ({u['client_id']})")
-    except:
-        log("Failed to fetch users")
+# Create the original registering window
+class RegisterWindow:
+    def __init__(self, master:tk.Tk, cch:ClientChatHandler):
+        self.master = master
+        self.master.title("Register/Login")
+        self.master.geometry("400x600")
+
+        # Specify the ClientChatHandler instance
+        self.cch = cch
+
+        # Create frames
+        self.create_widgets()
+
+    def create_widgets(self):
+        # Top frame
+        top_frame = tk.Frame(self.master)
+        top_frame.pack(expand=True, fill='both')
+        title = tk.Label(top_frame, text="Register/Login", font=("Helvetica", 16))
+        title.place(relx=0.5, rely=0.8, anchor='center')
+
+        # Bottom frame
+        bottom_frame = tk.Frame(self.master)
+        bottom_frame.pack(expand=True, fill='both')
+
+        container = tk.Frame(bottom_frame)
+        container.place(relx=0.5, rely=0.1, anchor='center')
+
+        tk.Label(container, text="Username:").grid(row=0, column=0, padx=5, pady=5)
+        name_entry = tk.Entry(container)
+        name_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.name_entry = name_entry
 
 
-def send_chat_request():
-    selection = user_list.curselection()
-    if not selection:
-        log("Select a user to chat with")
-        return
-    target_line = user_list.get(selection[0])
-    target_id = target_line.split("(")[-1].strip(")")
+        button_container = tk.Frame(bottom_frame)
+        button_container.place(relx=0.5, rely=0.4, anchor='center')  
+        tk.Button(button_container, text="Register", command=self.register).grid(row=0,column=0, padx=5, pady=5)
 
-    payload = {
-        "client_from_id": client_id,
-        "client_to_id": target_id
-    }
+    def register(self):
+        """
+        Pack all functions that register button should call into one. 
+        """
+        username = self.name_entry.get()
+        chat_handler = self.cch 
+        chat_handler.register(username)
 
-    try:
-        res = requests.post(f"{SERVER_URL}/send_chat_request", json=payload)
-        if res.status_code == 200:
-            log("Chat request sent")
-        else:
-            log("Failed to send request")
-    except:
-        log("Error sending request")
+        # Close the register window
+        self.master.destroy()
+        # Open the friends and online clients window
+        self.open_friends_and_online_clients_window()
 
+    def open_friends_and_online_clients_window(self):
+        """
+        Open the friends and online clients window.
+        """
+        # Create a new window
+        new_window = tk.Tk()
+        new_window.title("Friends and Online Clients")
+        new_window.geometry("800x550")
 
-def poll_responses():
-    while True:
-        if client_id:
-            try:
-                res = requests.get(f"{SERVER_URL}/fetch_responses/{client_id}")
-                responses = res.json()
-                for r in responses:
-                    status = r.get("status")
-                    sender = r.get("from_client_id")
-                    if status == "accepted":
-                        log(f"Chat accepted by {sender}")
-                        threading.Thread(target=client.connect_to_peer, args=(sender,), daemon=True).start()
-            except:
-                pass
-        time.sleep(3)
+        # Create an instance of the friends_and_online_clents_window class
+        friends_and_online_clients = friends_and_online_clents_window(new_window, self.cch)
+        
+        # Start the main loop for the new window
+        new_window.mainloop()
 
 
-def log(msg):
-    chat_display.insert(END, msg + "\n")
-    chat_display.see(END)
+
+class friends_and_online_clents_window:
+    def __init__(self, master:tk.Tk, cch:ClientChatHandler):
+        self.master = master
+        self.master.title("Friends and Online Clients")
+        self.master.geometry("800x550")
+
+        notebook = ttk.Notebook(self.master)
+        notebook.pack(pady=10, expand=True)
+
+        register_frame = tk.Frame(notebook, width=400, height=280)
+        chat_frame = tk.Frame(notebook, width=400, height=280)
+        register_frame.pack(fill="both", expand=True)
+        chat_frame.pack(fill="both", expand=True)
+        notebook.add(register_frame, text="Register")
+        notebook.add(chat_frame, text="Chat")
+
+        # Specify the ClientChatHandler instance
+        self.cch = cch
+
+        # Create frames
+        self.create_widgets()
+
+    def create_widgets(self):
+        # Top frame
+        top_frame = tk.Frame(self.master)
+        top_frame.pack(expand=True, fill='both')
+        title = tk.Label(top_frame, text="Friends and Online Clients", font=("Helvetica", 16))
+        title.place(relx=0.5, rely=0.8, anchor='center')
+
+        # Bottom frame
+        bottom_frame = tk.Frame(self.master)
+        bottom_frame.pack(expand=True, fill='both')
 
 
-# === GUI START ===
-root = Tk()
-root.title("P2P Chat GUI")
 
-Label(root, text="Your Name:").grid(row=0, column=0)
-name_entry = Entry(root)
-name_entry.grid(row=0, column=1)
-Button(root, text="Register", command=register).grid(row=0, column=2)
+if __name__ == "__main__":
+    root = tk.Tk()
+    cch = ClientChatHandler()
+    app = RegisterWindow(root, cch=cch)
+    root.mainloop()
 
-Label(root, text="Online Users:").grid(row=1, column=0, sticky=W)
-user_list = Listbox(root, width=50)
-user_list.grid(row=2, column=0, columnspan=2)
-Button(root, text="Send Chat Request", command=send_chat_request).grid(row=2, column=2)
 
-chat_display = Text(root, height=15, width=70)
-chat_display.grid(row=3, column=0, columnspan=3)
-
-# === Poll Responses in Background ===
-threading.Thread(target=poll_responses, daemon=True).start()
-
-root.mainloop()

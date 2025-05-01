@@ -44,7 +44,7 @@ def register_client():
 
         print("Client registered successfully.")
         registered = True
-        threading.Thread(target=update_client_info).start()  # start updating client info
+        threading.Thread(target=update_client_info, daemon=True).start()  # start updating client info
         return response.json()
     
     else:
@@ -90,6 +90,7 @@ def send_chat_request():
 
     if response.status_code == 200:
         print("Offer sent successfully.")
+        threading.Thread(target=fetch_cr_response, daemon=True).start()  # automate fetching responses
     else:
         print("Failed to send offer.")
 
@@ -106,7 +107,7 @@ def fetch_chat_request():
                 send_cr_response(from_id, status)
 
                 if decision == "a":
-                    threading.Thread(target=accept_new_connection).start()
+                    threading.Thread(target=accept_new_connection, daemon=True).start()
         else:
             print("No new offers.")
     else:
@@ -150,7 +151,7 @@ def main_menu():
         print("2. View Online Users")
         print("3. Send Chat Offer")
         print("4. Fetch Offers")
-        print("5. Fetch Responses")
+        print("5. Fetch Responses(Manual)")
         print("6. Send Text")
         print("0. Exit")
         choice = input("Enter your choice: ").strip()
@@ -190,12 +191,18 @@ def p2p_connect(client_id):
     try:
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_connecting_info = other_clients[client_id] # retrieve client info from other_clients
-        print("no Error before this")
         conn.connect((client_connecting_info["p2p_host"], client_connecting_info["p2p_port"]))
         connections[client_id] = conn
 
         # First thing to do is send the client_id
-        conn.send(client_info["client_id"].encode())
+        msg_data = {
+            "type": "p2p_connection_info",
+            "info": {
+                "client_id": client_info["client_id"]
+            }
+        }
+        msg_data = json.dumps(msg_data)
+        conn.send(msg_data.encode())
         
     except Exception as e:
         print("Error")
@@ -213,11 +220,16 @@ def p2p_send_text(client_id, text):
         # Get the current date and time
         dt = datetime.now()
         dt_formatted = dt.strftime("%Y-%m-%d %H:%M:%S")
-        msg = {"text": text, "datetime": dt_formatted, "from": "self"}
-        msg = json.dumps(msg)
+        self_id = client_info["client_id"]
+        msg = {"text": text, "datetime": dt_formatted, "from": self_id}
+        msg_data = {
+            "type": "text",
+            "info": msg
+        }
+        msg_data = json.dumps(msg_data)
         # Send the text to the client
         conn = connections[client_id]
-        conn.send(msg.encode())
+        conn.send(msg_data.encode())
         if client_id not in texts:
             texts[client_id] = []
         texts[client_id].append(msg)
@@ -233,29 +245,51 @@ def accept_new_connection():
     """
     global connections
     conn, addr = p2p_server.accept()
-    client_id = conn.recv(1024).decode()
-    connections[client_id] = conn
+    load_sort_texts_connection(conn)
+    
 
-def load_and_sort_texts():
+def load_sort_texts_connection(conn):
     """
     Function to load and sort texts from all connections.
     Load texts from each connection and sort them by timestamp.
     Loads every 10 seconds.
     """
-    global texts
-    while True:
-        for client_id, connection in connections.items():
-            # Get client id from connection
-            msg = connection.recv(1024).decode()
-            msg = json.loads(msg)
-            msg["from"] = "friend"
-            if client_id not in texts:
-                texts[client_id] = []
+    global connections
+    msg_data = conn.recv(1024).decode()
+    msg_data = json.loads(msg_data)
+    if msg_data:
+
+        # If message is text
+        if msg_data["type"] == "text":
+            msg = msg_data["info"]
+            message_from_id = msg["from"]
+            if message_from_id not in texts:
+                texts[message_from_id] = []
             
-            chat_history = texts[client_id]
+            chat_history = texts[message_from_id]
             chat_history.append(msg)
-        time.sleep(10)
         
+        # If message is an accepted connection
+        elif msg_data["type"] == "p2p_connection_info":
+            # Add the client to the connections dictionary
+            client_id = msg_data["info"]["client_id"]
+            if client_id not in connections:
+                connections[client_id] = conn       
+        
+    time.sleep(10)
+
+def automatic_load_and_sort_texts():
+    """
+    Function to loop "load_sort_texts_connection" every 10 seconds.
+    This is to keep the chat history updated.
+    Ran in a separate thread.
+    """
+    global texts, connections
+    while True:
+        for connection in connections.values():
+            # Get client id from connection
+            load_sort_texts_connection(connection)
+
    
 # === Debug ===
 def show_all_data():
@@ -270,9 +304,8 @@ def show_all_data():
 
 
 # Start user menu
-"""threading.Thread(target=listen_for_connections).start()
-threading.Thread(target=load_all_texts).start()"""
-threading.Thread(target=load_and_sort_texts).start()
-main_menu()
+if __name__ == "__main__":
+    threading.Thread(target=automatic_load_and_sort_texts, daemon=True).start()
+    main_menu()
 
 

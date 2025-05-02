@@ -13,6 +13,7 @@ class ClientChatHandler:
         self.other_clients = {}
         self.connections = {}
         self.texts = {}
+        self.chat_requests = {}
         self.registered = False
 
         # Setup P2P Server
@@ -33,7 +34,6 @@ class ClientChatHandler:
         if response.status_code == 200:
             self.client_info["client_id"] = response.json()["your_info"]["client_id"]
             self.registered = True
-            threading.Thread(target=self.update_client_info, daemon=True).start()
             return True
         return False
 
@@ -49,7 +49,7 @@ class ClientChatHandler:
         else:
             print("Failed to fetch users.")
 
-    def update_client_info(self):
+    def automatic_update_client_info(self):
         """
         Function to update the client info with the server.
         """
@@ -62,15 +62,18 @@ class ClientChatHandler:
                     if user_id not in self.other_clients and user_id != self.client_info["client_id"]:
                         # Add the user to other_clients
                         self.other_clients[user_id] = user
-                time.sleep(15)
+                time.sleep(10)
             else:
                 print("Failed to fetch users.")
-        
-    def send_chat_request(self):
-        client_to_id = input("Enter the client ID you want to chat with: ")
+
+    def start_client_info_update(self):
+        threading.Thread(target=self.automatic_update_client_info).start()
+
+
+    def send_chat_request(self, client_id):
         response = requests.post(f"{self.server_url}/send_chat_request", json={
             "client_from_id": self.client_info["client_id"],
-            "client_to_id": client_to_id
+            "client_to_id": client_id
         })
 
         if response.status_code == 200:
@@ -85,14 +88,8 @@ class ClientChatHandler:
             offers = response.json()
             if offers:
                 for offer in offers:
-                    from_id = offer["from_client_id"]
-                    print(f"\nReceived chat offer from {from_id}")
-                    decision = input("Accept (a) or Reject (r)? ").strip().lower()
-                    status = "accepted" if decision == "a" else "rejected"
-                    self.send_cr_response(from_id, status)
-
-                    if decision == "a":
-                        threading.Thread(target=self.accept_new_connection, daemon=True).start()
+                    offer["name"] = self.other_clients[offer["from_client_id"]]["name"]
+                    self.chat_requests[offer["from_client_id"]] = offer
             else:
                 print("No new offers.")
         else:

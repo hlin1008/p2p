@@ -66,14 +66,13 @@ class RegisterWindow:
         """
         # Create a new window
         new_window = tk.Tk()
-        new_window.title("Friends and Online Clients")
-        new_window.geometry("800x550")
 
         # Create an instance of the friends_and_online_clents_window class
         friends_and_online_clients = ClientFinderWindow(new_window, self.cch)
-        
-        # Start the main loop for the new window
+
+        # Start new window's main loop
         new_window.mainloop()
+        
 
 
 class ClientFinderWindow:
@@ -90,19 +89,89 @@ class ClientFinderWindow:
 
         self.user_id_map = [] # List to store user IDs
         self.chat_request_map = [] # List to store chat request IDs
+        self.friend_map = [] # List to store friend IDs
 
         self.create_friends_frame()
         self.create_online_users_frame()
         self.create_chat_request_frame()
 
-        
-        
+
+    # === Frinds frame ===
 
     def create_friends_frame(self):
         # Create a frame for friends
         friends_frame = tk.Frame(self.notebook, width=800, height=550)
         friends_frame.pack(fill="both", expand=True)
         self.notebook.add(friends_frame, text="Friends")
+
+        # Create a listbox to display friends
+        friend_listbox = tk.Listbox(friends_frame, width=50, height=20,
+                                          font=("Helvetica", 16))
+        friend_listbox.pack(pady=10)
+        self.friend_listbox = friend_listbox
+        
+        # Create a scrollbar for the listbox
+        scrollbar = tk.Scrollbar(friends_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        friend_listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=friend_listbox.yview)
+
+        # Create a button frame to gather buttons
+        button_frame = tk.Frame(friends_frame)
+        button_frame.pack(pady=10)
+
+        # Create a button to send chat request
+        refresh_button = tk.Button(button_frame, text="Refresh",
+                                    command=self.refresh_friends)
+        refresh_button.grid(row=0, column=0, padx=5, pady=5)
+        # Create a button to start chatting
+        start_chat_button = tk.Button(button_frame, text="Start Chatting", 
+                                        command=lambda:self.start_chat())
+        start_chat_button.grid(row=0, column=1, padx=5, pady=5)
+
+    def refresh_friends(self):
+        """
+        Refresh the current friends list.
+        """
+        self.friend_listbox.delete(0, tk.END)
+        self.friend_map.clear()
+
+        # Fetch the updated list of friends
+        self.cch.start_client_info_autoupdate()
+        time.sleep(0.5)
+        user_list = self.cch.other_clients
+        print(user_list)
+        for user_id, user_info in user_list.items():
+            if user_info["relation"] == "friend":
+                self.friend_listbox.insert(tk.END, f"{user_info['name']}")
+                self.friend_map.append(user_id)
+
+    def start_chat(self):
+        """
+        Start a chat with the selected friend.
+        """
+        selection = self.friend_listbox.curselection()
+        if selection:
+            index = selection[0]
+            user_id = self.friend_map[index]
+
+            # Create a new chat window
+            root = tk.Tk()
+            chat_window = ChatWindow(root, self.cch, self.cch.other_clients[user_id]["name"], user_id)
+
+            def gui_updater(msg):
+                chat_window.append_message(
+                    self.cch.other_clients[msg["from"]]["name"],
+                    msg["text"]
+                )
+
+            self.cch.gui_callback_map[user_id] = gui_updater
+
+            # Start the chat window's main loop
+            root.mainloop()
+
+
+    # === Online users frame ===     
 
     def create_online_users_frame(self):
         # Create a frame for online users
@@ -117,13 +186,11 @@ class ClientFinderWindow:
         self.online_users_listbox = online_users_listbox
 
         # Autoupdate the online users list
-        self.cch.start_client_info_update()
-        time.sleep(0.5)
-
         user_list = self.cch.other_clients
         for user_id, user_info in user_list.items():
             self.online_users_listbox.insert(tk.END, f"{user_info['name']}")
             self.user_id_map.append(user_id)
+            
         
         # Create a scrollbar for the listbox
         scrollbar = tk.Scrollbar(online_users_frame)
@@ -163,13 +230,16 @@ class ClientFinderWindow:
         self.user_id_map.clear()
 
         # Fetch the updated list of online users
-        self.cch.start_client_info_update()
+        self.cch.start_client_info_autoupdate()
         time.sleep(0.5)
         user_list = self.cch.other_clients
         for user_id, user_info in user_list.items():
             self.online_users_listbox.insert(tk.END, f"{user_info['name']}")
             self.user_id_map.append(user_id)
-        
+
+
+    # === Chat request frame ===    
+
     def create_chat_request_frame(self):
         online_users_frame = tk.Frame(self.notebook, width=800, height=550)
         online_users_frame.pack(fill="both", expand=True)
@@ -244,8 +314,83 @@ class ClientFinderWindow:
             self.chat_requests_listbox.delete(index)
             self.chat_request_map.pop(index)
             print(f"Chat request from {user_id} has been {status}ed.")
+
+            # Update friend list
+            if status == "accept":
+                self.friend_listbox.insert(tk.END, f"{self.cch.other_clients[user_id]['name']}")
+                self.friend_map.append(user_id)
+                self.cch.other_clients[user_id]["relation"] = "friend"
         
         
+
+
+class ChatWindow:
+    def __init__(self, master, cch:ClientChatHandler, friend_name, user_id):
+        self.master = master
+        self.master.title(f"Chat with {friend_name}")
+        self.master.geometry("400x600")
+
+
+        self.cch = cch
+        self.friend_name = friend_name
+        self.user_id = user_id
+
+
+        # Create frames
+        self.create_chat_display()
+        self.create_message_entry()
+    
+
+    def create_chat_display(self):
+        # --- Chat history display ---
+        self.chat_display = tk.Text(self.master, state='disabled', wrap='word', font=("Helvetica", 12))
+        self.chat_display.pack(padx=10, pady=10, fill='both', expand=True)
+
+        # --- Scrollbar for chat history ---
+        scrollbar = tk.Scrollbar(self.chat_display)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.chat_display.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.chat_display.yview)
+
+    def create_message_entry(self):
+        # --- Message entry field ---
+        entry_frame = tk.Frame(self.master, height=80)
+        entry_frame.pack(side=tk.BOTTOM, fill='x', padx=10, pady=5)
+        self.entry_frame = entry_frame
+
+        self.msg_entry = tk.Entry(self.entry_frame, font=("Helvetica", 14))
+        self.msg_entry.pack(side='left', fill='x', expand=True, padx=(0, 5))
+        self.msg_entry.bind("<Return>", self.send_message)
+
+        send_btn = tk.Button(self.entry_frame, text="Send", command=self.send_message)
+        send_btn.pack(side='right')
+
+    def send_message(self, event=None):
+        msg = self.msg_entry.get().strip()
+        if msg:
+            self.append_message("You", msg)
+            self.msg_entry.delete(0, tk.END)
+
+        # Send text through p2p
+        self.cch.p2p_send_text(self.user_id, msg)
+
+    def append_message(self, sender, message):
+        self.chat_display.config(state='normal')
+        self.chat_display.insert(tk.END, f"{sender}: {message}\n")
+        self.chat_display.config(state='disabled')
+        self.chat_display.see(tk.END)  # auto-scroll
+
+    def load_messages(self, messages):
+        """
+        Load messages into the chat display.
+        """
+        self.chat_display.config(state='normal')
+        for sender, message in messages:
+            self.chat_display.insert(tk.END, f"{sender}: {message}\n")
+        self.chat_display.config(state='disabled')
+        self.chat_display.see(tk.END)
+
+    
 
 
     

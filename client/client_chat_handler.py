@@ -23,6 +23,9 @@ class ClientChatHandler:
         self.p2p_server.bind((self.p2p_server_host, self.p2p_server_port))
         self.p2p_server.listen()
 
+        # for updating GUI
+        self.gui_callback_map = {}
+
     def register(self, username):
         self.client_info = {
             "name": username,
@@ -33,23 +36,12 @@ class ClientChatHandler:
         response = requests.post(f"{self.server_url}/register", json=self.client_info)
         if response.status_code == 200:
             self.client_info["client_id"] = response.json()["your_info"]["client_id"]
+            threading.Thread(target=self.listen_for_incoming_connections, daemon=True).start()
             self.registered = True
             return True
         return False
 
-
-    def view_users(self):
-        response = requests.get(f"{self.server_url}/users")
-        if response.status_code == 200:
-            users = response.json()
-            print("\n=== Online Users ===")
-            for user in users:
-                if user["client_id"] != self.client_info["client_id"]:
-                    print(f"- {user['name']} ({user['client_id']})")
-        else:
-            print("Failed to fetch users.")
-
-    def automatic_update_client_info(self):
+    def fetch_user_list(self):
         """
         Function to update the client info with the server.
         """
@@ -61,14 +53,14 @@ class ClientChatHandler:
                     user_id = user["client_id"]
                     if user_id not in self.other_clients and user_id != self.client_info["client_id"]:
                         # Add the user to other_clients
+                        user["relation"] = "general"
                         self.other_clients[user_id] = user
                 time.sleep(10)
             else:
                 print("Failed to fetch users.")
 
-    def start_client_info_update(self):
-        threading.Thread(target=self.automatic_update_client_info).start()
-
+    def start_client_info_autoupdate(self):
+        threading.Thread(target=self.fetch_user_list).start()
 
     def send_chat_request(self, client_id):
         response = requests.post(f"{self.server_url}/send_chat_request", json={
@@ -102,28 +94,33 @@ class ClientChatHandler:
             "status": status
         })
 
+        if status == "accept":
+            self.other_clients[from_id]["relation"] = "friend"
+            
+
         if response.status_code == 200:
             print("Offer response sent successfully.")
         else:
             print("Failed to send offer response.")
 
     def fetch_cr_response(self):
-        response = requests.get(f"{self.server_url}/fetch_responses/{self.client_info['client_id']}")
-        if response.status_code == 200:
-            responses = response.json()
-            if responses:
-                for res in responses:
-                    from_id = res["from_client_id"]
-                    status = res["status"]
-                    print(f"\nOffer to {from_id} was {status}!")
-                    if status == "accepted":
-                        # TODO: Start P2P connection here
-                        self.p2p_connect(from_id)
-                        print("You can now start direct P2P connection.")
+        while True:
+            response = requests.get(f"{self.server_url}/fetch_responses/{self.client_info['client_id']}")
+            if response.status_code == 200:
+                responses = response.json()
+                if responses:
+                    for res in responses:
+                        from_id = res["from_client_id"]
+                        status = res["status"]
+                        if status == "accept":
+                            self.other_clients[from_id]["relation"] = "friend"
+                            self.p2p_connect(from_id)
+                            print("You can now start direct P2P connection.")
+                else:
+                    print("No new responses.")
             else:
-                print("No new responses.")
-        else:
-            print("Failed to fetch responses.")
+                print("Failed to fetch responses.")
+            time.sleep(10)
 
 
     # === P2P Connection ===    
@@ -140,6 +137,10 @@ class ClientChatHandler:
             client_connecting_info = self.other_clients[client_id] # retrieve client info from other_clients
             conn.connect((client_connecting_info["p2p_host"], client_connecting_info["p2p_port"]))
             self.connections[client_id] = conn
+
+            # Start a new thread to listen for incoming messages from this connection
+            threading.Thread(target=self.handle_client_connection, args=(conn,), daemon=True).start()
+
 
             # First thing to do is send the client_id
             msg_data = {
@@ -176,61 +177,48 @@ class ClientChatHandler:
             # Send the text to the client
             conn = self.connections[client_id]
             conn.send(msg_data.encode())
-            if client_id not in texts:
+            if client_id not in self.texts:
                 self.texts[client_id] = []
             self.texts[client_id].append(msg)
         except Exception as e:
             print(f"Failed to send text: {e}")
 
-    def accept_new_connection(self):
-        """
-        Function to accept new P2P connections.
-        Have socket wait for incoming connections.
-        First message received is the client_id. Use it to identify the client.
-        Store the connection in the connections dictionary.
-        """
-        conn, addr = self.p2p_server.accept()
-        self.load_sort_texts_connection(conn)
-        
-    def load_sort_texts_connection(self,conn):
-        """
-        Function to load and sort texts from all connections.
-        Load texts from each connection and sort them by timestamp.
-        Loads every 10 seconds.
-        """
-        msg_data = conn.recv(1024).decode()
-        msg_data = json.loads(msg_data)
-        if msg_data:
-
-            # If message is text
-            if msg_data["type"] == "text":
-                msg = msg_data["info"]
-                message_from_id = msg["from"]
-                if message_from_id not in texts:
-                    self.texts[message_from_id] = []
-                
-                chat_history = self.texts[message_from_id]
-                chat_history.append(msg)
-            
-            # If message is an accepted connection
-            elif msg_data["type"] == "p2p_connection_info":
-                # Add the client to the connections dictionary
-                client_id = msg_data["info"]["client_id"]
-                if client_id not in self.connections:
-                    self.connections[client_id] = conn       
-            
-        time.sleep(10)
-
-    def automatic_load_and_sort_texts(self):
-        """
-        Function to loop "load_sort_texts_connection" every 10 seconds.
-        This is to keep the chat history updated.
-        Ran in a separate thread.
-        """
+    def listen_for_incoming_connections(self):
         while True:
-            for connection in self.connections.values():
-                # Get client id from connection
-                self.load_sort_texts_connection(connection)
+            conn, _ = self.p2p_server.accept()
+            threading.Thread(target=self.handle_client_connection, args=(conn,), daemon=True).start()
+
+    def handle_client_connection(self, conn):
+        while True:
+            try:
+                data = conn.recv(1024)
+                if not data:
+                    break
+                msg_data = json.loads(data.decode())
+                self.handle_message(conn, msg_data)
+            except Exception as e:
+                print(f"Error handling incoming message: {e}")
+                break
+
+    def handle_message(self, conn, msg_data):
+        if msg_data["type"] == "text":
+            msg = msg_data["info"]
+            from_id = msg["from"]
+            # Save message
+            if from_id not in self.texts:
+                self.texts[from_id] = []
+            self.texts[from_id].append(msg)
+
+            # UPDATE GUI
+            if from_id in self.gui_callback_map:
+                self.gui_callback_map[from_id](msg)
+
+        elif msg_data["type"] == "p2p_connection_info":
+            self.connections[msg_data["info"]["client_id"]] = conn
+
+              
+    
+
 
     
     # === Debug ===

@@ -5,6 +5,7 @@ import random
 import socket
 import time
 from datetime import datetime
+import database_handler as dbh
 
 class ClientChatHandler:
     def __init__(self, server_url="http://localhost:65431"):
@@ -26,6 +27,8 @@ class ClientChatHandler:
         # for updating GUI
         self.gui_callback_map = {}
 
+        self.db = None
+
     def register(self, username):
         self.client_info = {
             "name": username,
@@ -36,8 +39,31 @@ class ClientChatHandler:
         response = requests.post(f"{self.server_url}/register", json=self.client_info)
         if response.status_code == 200:
             self.client_info["client_id"] = response.json()["your_info"]["client_id"]
+            self.db = dbh.DatabaseHandler(db_path=f"chat_{username}.db")
+            self.db.save_client_info(
+                client_id=self.client_info["client_id"],
+                username=username,
+                host=self.p2p_server_host,
+                port=self.p2p_server_port
+            )
             threading.Thread(target=self.listen_for_incoming_connections, daemon=True).start()
             self.registered = True
+
+            # Load previously saved other clients
+            other_clients = self.db.get_all_other_clients()
+            for cid, name, host, port, rel in other_clients:
+                self.other_clients[cid] = {
+                    "name": name,
+                    "p2p_host": host,
+                    "p2p_port": port,
+                    "relation": rel
+                }
+
+            # Optional: preload chat history into self.texts
+            for cid in self.other_clients:
+                history = self.db.get_chat_history(self.client_info["client_id"], cid)
+                self.texts[cid] = [{"from": h[0], "receiver": h[1], "text": h[2], "datetime": h[3]} for h in history]
+
             return True
         return False
 
@@ -55,6 +81,13 @@ class ClientChatHandler:
                         # Add the user to other_clients
                         user["relation"] = "general"
                         self.other_clients[user_id] = user
+                        self.db.upsert_other_client(
+                            client_id=user_id,
+                            username=user["name"],
+                            host=user["p2p_host"],
+                            port=user["p2p_port"],
+                            relation="general"
+                        )
                 time.sleep(10)
             else:
                 print("Failed to fetch users.")
@@ -180,6 +213,8 @@ class ClientChatHandler:
             if client_id not in self.texts:
                 self.texts[client_id] = []
             self.texts[client_id].append(msg)
+            if self.db:
+                self.db.save_message(sender=self_id, receiver=client_id, message=text, timestamp=dt_formatted)
         except Exception as e:
             print(f"Failed to send text: {e}")
 
@@ -208,6 +243,8 @@ class ClientChatHandler:
             if from_id not in self.texts:
                 self.texts[from_id] = []
             self.texts[from_id].append(msg)
+            if self.db:
+                self.db.save_message(sender=from_id, receiver=self.client_info["client_id"], message=msg["text"], timestamp=msg["datetime"])
 
             # UPDATE GUI
             if from_id in self.gui_callback_map:
@@ -234,6 +271,3 @@ class ClientChatHandler:
 
 
     """threading.Thread(target=automatic_load_and_sort_texts, daemon=True).start()"""
-
-
-

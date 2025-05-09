@@ -63,8 +63,6 @@ python gui.py
 - Message sending and persistence
 - SQLite message retrieval
 
-You can use Python’s built-in `unittest` module for coverage.
-
 ---
 
 ## Future Improvements
